@@ -1,7 +1,7 @@
 {
-  "name": "vehicle-search-mcp",
+  "name": "marketplace-search-mcp",
   "version": "1.0.0",
-  "description": "MCP server for searching Facebook Marketplace and Craigslist vehicle listings with option-level filtering (transmission, body style, factory options)",
+  "description": "MCP server for searching Facebook Marketplace and Craigslist listings — logged-out, no API keys",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -10,16 +10,16 @@
   "keywords": [
     "mcp",
     "model-context-protocol",
-    "cars",
-    "vehicles",
+    "marketplace",
+    "classifieds",
     "facebook-marketplace",
     "craigslist",
-    "car-search"
+    "search"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Jacobobber/vehicle-search-mcp.git"
+    "url": "https://github.com/Jacobobber/marketplace-search-mcp.git"
   },
   "engines": {
     "node": ">=18"
