@@ -10,7 +10,13 @@
 
 import assert from "node:assert/strict";
 import { parsePrice, matchesKeywords } from "../src/normalize.js";
-import { parseListings, searchCraigslist } from "../src/sources/craigslist.js";
+import {
+  categoryCode,
+  fetchCraigslistPost,
+  isCraigslistUrl,
+  parseListings,
+  searchCraigslist,
+} from "../src/sources/craigslist.js";
 import {
   searchMarketplace,
   getListing,
@@ -77,7 +83,7 @@ function check(name, fn) {
   }
 }
 
-async function liveCheck(name, fn) {
+async function asyncCheck(name, fn) {
   try {
     const note = await fn();
     console.log(`PASS  ${name}${note ? ` — ${note}` : ""}`);
@@ -164,11 +170,47 @@ check("parseListings decodes HTML entities in titles", () => {
   assert.equal(parsed[2].title, `Solid oak "mid-century" dresser '70s`);
 });
 
+check("categoryCode maps names to codes and passes raw codes through", () => {
+  assert.equal(categoryCode("furniture"), "fua");
+  assert.equal(categoryCode("cta"), "cta");
+  assert.equal(categoryCode(undefined), "sss");
+  assert.equal(categoryCode(""), "sss");
+});
+
+check("categoryCode does not resolve inherited Object keys to members", () => {
+  assert.equal(categoryCode("constructor"), "constructor");
+  assert.equal(categoryCode("hasOwnProperty"), "hasOwnProperty");
+});
+
+check("isCraigslistUrl accepts craigslist.org and its subdomains", () => {
+  assert.equal(
+    isCraigslistUrl("https://sfbay.craigslist.org/sfc/fuo/d/san-francisco-desk/0001.html"),
+    true
+  );
+  assert.equal(isCraigslistUrl("https://craigslist.org/about/help"), true);
+});
+
+check("isCraigslistUrl rejects lookalike hosts, other schemes, and non-URLs", () => {
+  assert.equal(isCraigslistUrl("https://evil.test/?craigslist.org"), false);
+  assert.equal(isCraigslistUrl("https://craigslist.org.evil.test/post.html"), false);
+  assert.equal(isCraigslistUrl("http://169.254.169.254/latest/craigslist.org"), false);
+  assert.equal(isCraigslistUrl("file:///C:/Windows/win.ini"), false);
+  assert.equal(isCraigslistUrl("not a url"), false);
+});
+
+await asyncCheck("fetchCraigslistPost refuses a non-craigslist host", async () => {
+  await assert.rejects(
+    () => fetchCraigslistPost("https://evil.test/?craigslist.org"),
+    /refusing to fetch/i
+  );
+  return "rejected before any request";
+});
+
 console.log("\n--- live checks (zero results OK, thrown errors fail) ---");
 
 let fbListings = [];
 
-await liveCheck("craigslist searchCraigslist across 2 sites", async () => {
+await asyncCheck("craigslist searchCraigslist across 2 sites", async () => {
   const res = await searchCraigslist({
     query: "dresser",
     sites: ["saltlakecity", "denver"],
@@ -178,7 +220,7 @@ await liveCheck("craigslist searchCraigslist across 2 sites", async () => {
   return `${res.total_found} found, ${res.sites_searched} sites, ${res.sites_failed.length} failed`;
 });
 
-await liveCheck("facebook searchMarketplace across 2 metros", async () => {
+await asyncCheck("facebook searchMarketplace across 2 metros", async () => {
   const res = await searchMarketplace({
     query: "herman miller",
     metros: ["saltlakecity", "portland"],
@@ -189,7 +231,7 @@ await liveCheck("facebook searchMarketplace across 2 metros", async () => {
 });
 
 if (fbListings.length > 0) {
-  await liveCheck("facebook getListing returns a non-empty detail block", async () => {
+  await asyncCheck("facebook getListing returns a non-empty detail block", async () => {
     const { id } = fbListings[0];
     const item = await getListing(id);
     assert.ok(item.detail && item.detail.trim().length > 0, "detail was empty");

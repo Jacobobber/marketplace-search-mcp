@@ -9,7 +9,7 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 // Major-metro Craigslist sites for nationwide coverage. Craigslist folds
-// "nearby results" into each search, so ~35 metros covers most of the US.
+// "nearby results" into each search, so these 36 metros cover most of the US.
 export const CL_SITES = [
   "newyork", "losangeles", "chicago", "houston", "phoenix", "philadelphia",
   "sanantonio", "sandiego", "dallas", "austin", "sfbay", "seattle", "denver",
@@ -36,6 +36,40 @@ export const CL_CATEGORIES = {
 };
 
 export const DEFAULT_CATEGORY = "sss";
+
+/**
+ * Resolve a caller-supplied category to the code Craigslist expects. Accepts a
+ * CL_CATEGORIES key ("furniture") or a raw code ("fua"). Own-property lookup
+ * only, so inherited names like "constructor" pass through as raw codes instead
+ * of resolving to an Object member.
+ *
+ * @param {string} [category]
+ * @returns {string} category code
+ */
+export function categoryCode(category) {
+  if (category && Object.hasOwn(CL_CATEGORIES, category)) return CL_CATEGORIES[category];
+  return category || DEFAULT_CATEGORY;
+}
+
+/**
+ * True when `ref` is an http(s) URL on craigslist.org or one of its subdomains.
+ * Post URLs come from parsed HTML and from tool arguments, so the host is
+ * checked properly rather than by substring — "https://evil.test/?craigslist.org"
+ * must not be fetched.
+ *
+ * @param {string} ref
+ * @returns {boolean}
+ */
+export function isCraigslistUrl(ref) {
+  let url;
+  try {
+    url = new URL(String(ref));
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+  return url.hostname === "craigslist.org" || url.hostname.endsWith(".craigslist.org");
+}
 
 function decodeChars(s) {
   return s
@@ -112,7 +146,7 @@ export function parseListings(html, site) {
  */
 export async function searchSite(site, { category, query, minPrice, maxPrice, titleOnly }) {
   const url = new URL(`https://www.craigslist.org/search/area/${site}`);
-  url.searchParams.set("cat", CL_CATEGORIES[category] ?? category ?? DEFAULT_CATEGORY);
+  url.searchParams.set("cat", categoryCode(category));
   if (query) url.searchParams.set("query", query);
   if (titleOnly) url.searchParams.set("srchType", "T");
   if (minPrice != null) url.searchParams.set("min_price", String(minPrice));
@@ -186,6 +220,9 @@ export async function searchCraigslist(opts) {
  * @returns {Promise<{title: string|null, price: number|null, body: string}>}
  */
 export async function fetchCraigslistPost(url) {
+  if (!isCraigslistUrl(url)) {
+    throw new Error(`Not a craigslist.org post URL, refusing to fetch: ${url}`);
+  }
   const res = await fetch(url, {
     headers: { "User-Agent": UA },
     signal: AbortSignal.timeout(20000),
