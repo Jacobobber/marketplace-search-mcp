@@ -7,6 +7,7 @@ import {
   CL_SITES,
   DEFAULT_CATEGORY,
   fetchCraigslistPost,
+  isCraigslistUrl,
   searchCraigslist,
 } from "./sources/craigslist.js";
 import {
@@ -285,7 +286,7 @@ server.registerTool(
   async ({ url_or_id }) => {
     const ref = url_or_id.trim();
     let result;
-    if (/craigslist\.org/i.test(ref)) {
+    if (isCraigslistUrl(ref)) {
       const post = await fetchCraigslistPost(ref);
       result = {
         source: "craigslist",
@@ -330,12 +331,24 @@ server.registerTool(
   }
 );
 
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await closeBrowser();
+  process.exit(0);
+}
+
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, async () => {
-    await closeBrowser();
-    process.exit(0);
-  });
+  process.on(signal, shutdown);
 }
 
 const transport = new StdioServerTransport();
+server.server.onclose = () => void shutdown();
+// StdioServerTransport only subscribes to stdin 'data', so a client that
+// disconnects by closing the pipe never triggers a transport close. An open
+// Chrome keeps the event loop alive, so without watching for EOF here the
+// process would sit there forever holding a browser nobody can reach.
+process.stdin.on("end", () => void shutdown());
+process.stdin.on("close", () => void shutdown());
 await server.connect(transport);

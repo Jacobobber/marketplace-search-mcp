@@ -42,11 +42,21 @@ function chromePath() {
 let browserPromise = null;
 async function getBrowser() {
   if (!browserPromise) {
-    browserPromise = puppeteer.launch({
-      executablePath: chromePath(),
-      headless: true,
-      args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-    });
+    // A failed launch must not be cached: without the reset, one transient
+    // failure would make every later Facebook search replay the same error for
+    // the lifetime of the process. Only clear the slot if it still holds this
+    // attempt, so a late rejection cannot orphan a browser started since.
+    const attempt = puppeteer
+      .launch({
+        executablePath: chromePath(),
+        headless: true,
+        args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+      })
+      .catch((err) => {
+        if (browserPromise === attempt) browserPromise = null;
+        throw err;
+      });
+    browserPromise = attempt;
   }
   return browserPromise;
 }
@@ -57,8 +67,14 @@ const UA =
 async function newPage() {
   const browser = await getBrowser();
   const page = await browser.newPage();
-  await page.setUserAgent(UA);
-  await page.setViewport({ width: 1280, height: 900 });
+  try {
+    await page.setUserAgent(UA);
+    await page.setViewport({ width: 1280, height: 900 });
+  } catch (err) {
+    // The caller only closes pages it received, so clean up here.
+    await page.close().catch(() => {});
+    throw err;
+  }
   return page;
 }
 
@@ -212,9 +228,11 @@ export async function getListing(itemId) {
  * @returns {Promise<void>}
  */
 export async function closeBrowser() {
-  if (browserPromise) {
-    const b = await browserPromise.catch(() => null);
-    await b?.close().catch(() => {});
-    browserPromise = null;
-  }
+  // Clear the slot first: anything that asks for a browser mid-shutdown should
+  // start its own rather than receive the one being torn down.
+  const pending = browserPromise;
+  browserPromise = null;
+  if (!pending) return;
+  const browser = await pending.catch(() => null);
+  await browser?.close().catch(() => {});
 }

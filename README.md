@@ -100,7 +100,7 @@ Slugs must be lowercase alphanumeric with no punctuation: `saltlakecity`, not `s
 }
 ```
 
-`price` is always a number or `null` — `"Free"` and "contact me" posts come back as `null`, never `0`. `searched_in` is the metro or site the result came from. Craigslist has no numeric post id in static results, so the trailing URL segment doubles as `id`. Results are sorted by price ascending with unknown prices last. `sources_failed` collects per-metro and per-listing errors without failing the whole call — a single timed-out metro does not sink the search.
+`price` is always a number or `null` — `"Free"` and posts with no price field come back as `null` rather than `0`, while a post the seller literally listed at `$0` keeps `0`. `searched_in` is the metro or site the result came from. Craigslist has no numeric post id in static results, so the trailing URL segment doubles as `id`. Results are sorted by price ascending with unknown prices last. `sources_failed` collects per-metro and per-listing errors without failing the whole call — a single timed-out metro does not sink the search.
 
 **Price handling.** Craigslist enforces `price_min`/`price_max` server-side; Facebook has no price parameter, so its results are filtered here. Either way, when you set a bound, listings with no parsable price are dropped — otherwise every "contact me" post would match every budget.
 
@@ -122,7 +122,7 @@ Fetch one listing's title, price, and full description.
 | --- | --- | --- |
 | `url_or_id` | string | A craigslist.org post URL, a `facebook.com/marketplace/item/<id>/` URL, or a bare Facebook item id. |
 
-Returns `{ source, title, price, detail }`, with `price` normalized to a number or `null`. Anything it cannot recognize as one of those three forms is an error rather than a guess.
+Returns `{ source, title, price, detail }`, with `price` normalized to a number or `null`. Anything it cannot recognize as one of those three forms is an error rather than a guess: the host is parsed and checked, so a lookalike such as `https://example.com/?craigslist.org` is rejected instead of fetched.
 
 ### `list_sources`
 
@@ -185,7 +185,7 @@ With `deep_check` on, `sealed` is matched against each post's full description, 
 
 ## Composing with other servers
 
-This server deliberately contains **zero domain logic**. It knows how to find and filter listings, and nothing about what any of them mean. Domain-specific servers compose cleanly on top: pair it with a VIN decoder or a recall-lookup server when shopping for a car, and the model can search here and interpret there. Keeping the domain knowledge out of the search layer is what lets the same tool hunt for a dresser, a kayak, and a discontinued Lego set.
+This server deliberately contains **zero domain logic**. It knows how to find and filter listings, and nothing about what any of them mean. Domain-specific servers compose cleanly on top: pair it with a specs database, a price-history service, or a safety-recall lookup for whatever you are shopping for, and the model can search here and interpret there. Keeping the domain knowledge out of the search layer is what lets the same tool hunt for a dresser, a kayak, and a discontinued Lego set.
 
 ## Limitations and etiquette
 
