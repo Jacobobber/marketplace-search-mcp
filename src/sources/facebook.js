@@ -183,8 +183,11 @@ export async function getListing(itemId) {
     return await page.evaluate((anchorSources) => {
       const text = document.body.innerText;
       const title = document.title.replace(/ \| Facebook.*$/, "");
-      // Price renders above the detail block; grab the first standalone $ line
-      const price = text.match(/^\$[\d,]+(?:\n|$)/m)?.[0]?.trim() ?? null;
+      // Price renders above the detail block. A price-dropped listing renders
+      // the current and struck-through original on one line ("$5$15"), so the
+      // trailing original must be tolerated and dropped — otherwise the match
+      // fails here and lands on a price from the recommendations rail below.
+      const price = text.match(/^(\$[\d,]+)(?:\$[\d,]+)?(?:\n|$)/m)?.[1] ?? null;
       const starts = anchorSources
         .map(([source, flags]) => text.search(new RegExp(source, flags)))
         .filter((i) => i >= 0);
