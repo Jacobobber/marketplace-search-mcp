@@ -9,7 +9,7 @@
 // markup drift, dead selectors, and a missing browser.
 
 import assert from "node:assert/strict";
-import { parsePrice, matchesKeywords } from "../src/normalize.js";
+import { parsePrice, matchesKeywords, collapseDuplicates } from "../src/normalize.js";
 import {
   categoryCode,
   fetchCraigslistPost,
@@ -139,6 +139,20 @@ check("matchesKeywords fails when a require term is absent", () => {
     matchesKeywords("Herman Miller Aeron size B", { require: ["steelcase"] }),
     false
   );
+});
+
+check("collapseDuplicates removes repost spam, keeps distinct listings", () => {
+  const spam = { title: "Office Desk Gaming Chairs", price: 350, location: "Phoenix" };
+  const { listings, collapsed } = collapseDuplicates([
+    { ...spam, url: "https://a/1" },
+    { ...spam, url: "https://a/2" },
+    { ...spam, title: "office  desk gaming chairs", url: "https://a/3" },
+    { ...spam, price: 300, url: "https://a/4" },
+    { title: "Aeron Chair", price: 350, location: "Phoenix", url: "https://a/5" },
+  ]);
+  assert.equal(listings.length, 3);
+  assert.equal(collapsed, 2);
+  assert.equal(listings[0].url, "https://a/1");
 });
 
 const parsed = parseListings(CRAIGSLIST_HTML, "sfbay");

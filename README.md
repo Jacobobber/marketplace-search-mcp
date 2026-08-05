@@ -54,6 +54,24 @@ Drop the `env` block entirely if Chrome is installed in the usual place.
 
 Verify the install with `npm test`, which runs offline parser checks plus a small live query against both sites.
 
+## Quickstart
+
+Once registered, ask your MCP client something like:
+
+> Find me a Herman Miller Aeron under $300 near Denver. Check the descriptions for size B.
+
+which typically maps to two calls — a fast title search, then a deep check of the shortlist:
+
+```json
+{ "query": "herman miller aeron", "sources": "craigslist", "cl_sites": ["denver"], "title_only": true, "price_max": 300 }
+```
+
+```json
+{ "query": "aeron", "cl_sites": ["denver"], "require_keywords": ["size b"], "deep_check": true, "max_results": 5 }
+```
+
+The rhythm that works: `list_sources` to confirm slugs, a narrow Craigslist `title_only` search first (fastest), widen metros or add `"sources": "facebook"` when results are thin, and save `deep_check` for the shortlist with `max_results` set to what you actually need.
+
 ## Tools
 
 ### `search_marketplace`
@@ -85,6 +103,7 @@ Slugs must be lowercase alphanumeric with no punctuation: `saltlakecity`, not `s
   "returned": 50,
   "deep_checked": 0,
   "skipped_deep_checks": 0,
+  "duplicates_collapsed": 4,
   "sources_failed": [],
   "listings": [
     {
@@ -102,13 +121,17 @@ Slugs must be lowercase alphanumeric with no punctuation: `saltlakecity`, not `s
 
 `price` is always a number or `null` — `"Free"` and posts with no price field come back as `null` rather than `0`, while a post the seller literally listed at `$0` keeps `0`. `searched_in` is the metro or site the result came from. Craigslist has no numeric post id in static results, so the trailing URL segment doubles as `id`. Results are sorted by price ascending with unknown prices last. `sources_failed` collects per-metro and per-listing errors without failing the whole call — a single timed-out metro does not sink the search.
 
+**Repost spam.** Sellers (usually dealers) post the same item over and over under fresh ids, which URL dedupe cannot catch. Listings with the same normalized title, price, and location are collapsed to one, and `duplicates_collapsed` reports how many were removed.
+
+**Reading the counts.** `deep_checked` is how many detail pages were *fetched*; `skipped_deep_checks` is how many candidates were judged by title only (past the fetch cap, or because enough matches had already been found); `total_found` is what survived all filters; `returned` is capped by `max_results`. After a deep check it is normal for `deep_checked` to exceed `total_found` — pages were fetched and then filtered out.
+
 **Price handling.** Craigslist enforces `price_min`/`price_max` server-side; Facebook has no price parameter, so its results are filtered here. Either way, when you set a bound, listings with no parsable price are dropped — otherwise every "contact me" post would match every budget.
 
 **Deep check.** Titles are short and omit almost everything. With `deep_check: true` the server fetches each candidate's own page and matches against the full description, which is how you find "must be sealed" or "no rips" or a model number buried in prose. Precisely what happens:
 
 - `exclude_keywords` are applied **early, against titles**, before anything is fetched — no reason to pay for a page that is already disqualified. They are applied again against the full text afterwards.
 - `require_keywords` are **held back** and matched against the title plus the full description together. Filtering them against titles first would make the fetch pointless.
-- Only the **40 cheapest candidates** are fetched, four at a time, at roughly 2–4 seconds each. Past that cap the title is all there is to judge by, so `require_keywords` fall back to title matching for the remainder. The response reports `deep_checked` and `skipped_deep_checks` so you know which rule applied.
+- Candidates are fetched **cheapest-first**, four at a time, at roughly 2–4 seconds each, bounded by a **40-fetch cap** — and fetching **stops early once `max_results` matches are found**, so set `max_results` to the number you actually want rather than leaving the default. Whatever is not fetched (past the cap or after the early stop) is judged by title, with `require_keywords` falling back to title matching. The response reports `deep_checked` and `skipped_deep_checks` so you know which rule applied.
 - Deep-checked listings gain a `detail_excerpt` field, the first 600 characters of the description.
 - If a detail page fails to load, the listing survives on its title alone and the error lands in `sources_failed`.
 
