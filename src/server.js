@@ -16,7 +16,12 @@ import {
   getListing,
   searchMarketplace,
 } from "./sources/facebook.js";
-import { matchesKeywords, normalizeListing, parsePrice } from "./normalize.js";
+import {
+  collapseDuplicates,
+  matchesKeywords,
+  normalizeListing,
+  parsePrice,
+} from "./normalize.js";
 
 const DEEP_CHECK_CONCURRENCY = 4;
 // Detail pages cost a page render (FB) or a round trip (CL); the cap keeps a
@@ -50,17 +55,22 @@ async function fetchDetail(listing) {
 
 /**
  * Attach detail text to the cheapest candidates, bounded by DEEP_CHECK_CAP.
+ * Fetching stops early once `needed` candidates satisfy `matches` — the
+ * candidates arrive price-sorted, so the survivors found first are also the
+ * cheapest, and later pages would be paid for only to be truncated away.
  *
  * @param {Array<object>} candidates normalized listings, already sorted
  * @param {string[]} failures collects per-listing fetch errors
+ * @param {{needed: number, matches: (l: object) => boolean}} stop early-stop rule
  * @returns {Promise<{checked: Array<object>, skipped: Array<object>}>}
  */
-async function deepCheck(candidates, failures) {
+async function deepCheck(candidates, failures, { needed, matches }) {
   const targets = candidates.slice(0, DEEP_CHECK_CAP);
-  const skipped = candidates.slice(DEEP_CHECK_CAP);
   const checked = [];
+  let survivors = 0;
+  let i = 0;
 
-  for (let i = 0; i < targets.length; i += DEEP_CHECK_CONCURRENCY) {
+  for (; i < targets.length && survivors < needed; i += DEEP_CHECK_CONCURRENCY) {
     const chunk = targets.slice(i, i + DEEP_CHECK_CONCURRENCY);
     const results = await Promise.allSettled(chunk.map(fetchDetail));
     results.forEach((r, j) => {
@@ -70,9 +80,12 @@ async function deepCheck(candidates, failures) {
         checked.push({ ...chunk[j], detail: "" });
         return;
       }
-      checked.push({ ...chunk[j], detail: r.value });
+      const withDetail = { ...chunk[j], detail: r.value };
+      checked.push(withDetail);
+      if (matches(withDetail)) survivors += 1;
     });
   }
+  const skipped = [...targets.slice(i), ...candidates.slice(DEEP_CHECK_CAP)];
   return { checked, skipped };
 }
 
@@ -91,8 +104,14 @@ server.registerTool(
       "and is deduped by URL. " +
       "Titles are short and often omit details, so set deep_check=true when your keywords describe " +
       "something that lives in the description (condition, dimensions, model numbers) — it fetches " +
-      `each candidate's page at roughly 2-4 seconds per listing, capped at ${DEEP_CHECK_CAP} fetches. ` +
-      "Start narrow: one or two metros with title_only=true is far faster than a nationwide sweep.",
+      `candidate pages cheapest-first at roughly 2-4 seconds each, capped at ${DEEP_CHECK_CAP} fetches, ` +
+      "and stops as soon as max_results matches are found, so set max_results to what you actually " +
+      "need. In the response: deep_checked = detail pages fetched, skipped_deep_checks = candidates " +
+      "judged by title only, total_found = listings surviving all filters, duplicates_collapsed = " +
+      "repost spam removed (same title+price+location posted repeatedly). " +
+      "Typical flow: call list_sources to confirm slugs, run a narrow craigslist search with " +
+      "title_only=true (fastest), widen metros or add facebook if results are thin, then deep_check " +
+      "the shortlist. Start narrow: one or two metros beats a nationwide sweep.",
     inputSchema: {
       query: z
         .string()
@@ -215,37 +234,40 @@ server.registerTool(
     // With deep_check on, require_keywords are held back for the full text —
     // filtering them against titles first would make the fetch pointless.
     // Exclusions still run early: no reason to pay for a page we'll discard.
-    const candidates = found
-      .filter(inPriceRange)
-      .filter((l) =>
-        matchesKeywords(l.title ?? "", {
-          require: deep_check ? [] : require_keywords,
-          exclude: exclude_keywords,
-        })
-      )
-      .sort(byPrice);
+    const { listings: unique, collapsed } = collapseDuplicates(
+      found
+        .filter(inPriceRange)
+        .filter((l) =>
+          matchesKeywords(l.title ?? "", {
+            require: deep_check ? [] : require_keywords,
+            exclude: exclude_keywords,
+          })
+        )
+    );
+    const candidates = unique.sort(byPrice);
 
     let listings = candidates;
     let deepChecked = 0;
     let skippedDeepChecks = 0;
 
     if (deep_check && candidates.length) {
-      const { checked, skipped } = await deepCheck(candidates, failures);
+      const deepMatch = (l) =>
+        matchesKeywords(`${l.title ?? ""}\n${l.detail}`, {
+          require: require_keywords,
+          exclude: exclude_keywords,
+        });
+      const { checked, skipped } = await deepCheck(candidates, failures, {
+        needed: max_results,
+        matches: deepMatch,
+      });
       deepChecked = checked.length;
       skippedDeepChecks = skipped.length;
       listings = [
-        ...checked
-          .filter((l) =>
-            matchesKeywords(`${l.title ?? ""}\n${l.detail}`, {
-              require: require_keywords,
-              exclude: exclude_keywords,
-            })
-          )
-          .map(({ detail, ...l }) => ({
-            ...l,
-            detail_excerpt: detail.slice(0, DETAIL_EXCERPT_CHARS),
-          })),
-        // Past the cap, the title is all we have to judge by.
+        ...checked.filter(deepMatch).map(({ detail, ...l }) => ({
+          ...l,
+          detail_excerpt: detail.slice(0, DETAIL_EXCERPT_CHARS),
+        })),
+        // Past the cap (or the early stop), the title is all we judge by.
         ...skipped.filter((l) =>
           matchesKeywords(l.title ?? "", {
             require: require_keywords,
@@ -260,6 +282,7 @@ server.registerTool(
       returned: Math.min(listings.length, max_results),
       deep_checked: deepChecked,
       skipped_deep_checks: skippedDeepChecks,
+      duplicates_collapsed: collapsed,
       sources_failed: failures,
       listings: listings.slice(0, max_results),
     };

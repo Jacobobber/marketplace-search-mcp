@@ -45,6 +45,31 @@ export function normalizeListing({ source, ...raw }) {
 }
 
 /**
+ * Collapse repost spam. URL/id dedupe cannot catch a seller (usually a
+ * dealer) posting the same item many times under fresh ids, so listings with
+ * the same normalized title, price, and location keep only their first
+ * occurrence.
+ *
+ * @param {Array<{title: ?string, price: ?number, location: ?string}>} listings
+ * @returns {{listings: Array<object>, collapsed: number}}
+ */
+export function collapseDuplicates(listings) {
+  const seen = new Set();
+  const kept = [];
+  for (const l of listings) {
+    const key = [
+      (l.title ?? "").toLowerCase().replace(/\s+/g, " ").trim(),
+      l.price ?? "",
+      (l.location ?? "").toLowerCase().trim(),
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(l);
+  }
+  return { listings: kept, collapsed: listings.length - kept.length };
+}
+
+/**
  * Case-insensitive keyword gate. Every `require` term must appear in the text
  * and no `exclude` term may appear. Empty lists always pass.
  *
